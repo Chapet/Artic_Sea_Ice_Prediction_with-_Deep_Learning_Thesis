@@ -1,4 +1,5 @@
 import os
+import time
 from netCDF4 import Dataset
 import numpy as np
 import datetime
@@ -12,6 +13,7 @@ from tensorflow.python.keras.losses import BinaryCrossentropy
 from tensorflow.python.keras.models import load_model
 import matplotlib.pyplot as plt
 import seaborn as sns
+
 
 ####################################################################################################
 # You probably have to change the imports to fit your configuration, mines are a little messed up  #
@@ -636,60 +638,83 @@ def batched_forecast(nb_lead_months, nb_lead_days):
         print(str(y) + " done")
 
 
-def plot_heatmap(model_number, classxy, type_metric):
+def plot_heatmap(model1, model2):  # model1 is the base model, model2 is the model to compare model1 with if model2 = 0, we simply display the result of model1
     sns.set_theme()
-    file_str = ["", "", ""]
-    class_ = 0
-    if type_metric == 'mse':
-        file_str[0] = "Mean Squared Error"
-        file_str[1] = "Mean Squared Error (MSE)"
-    elif type_metric == 'acc':
-        file_str[0] = "Accuracy"
-        file_str[1] = "Accuracy (%)"
-        class_ = 1
-    elif type_metric == 'binacc':
-        file_str[0] = "Binary Accuracy"
-        file_str[1] = "Binary Accuracy (%)"
 
-    if model_number == 1:
-        file_str[2] = "U-Net 1"
-    elif model_number == 2:
-        file_str[2] = "Simple Convolution"
-    elif model_number == 3:
-        file_str[2] = "U-Net 2"
-    elif model_number == 4:
-        file_str[2] = "Trivial prediction"
+    save_fn = str(model1) + ".png"
+    compMode = False
+    result_icenet = [[96.9, 96.4, 96.4, 96.4, 96.3, 96.3],
+                     [96.9, 96, 95.8, 95.8, 95.7, 95.7],
+                     [96.9, 95.7, 95.3, 95, 95.1, 95.1],
+                     [97.1, 95.9, 95.4, 95.3, 95.1, 95.1],
+                     [97.5, 96.6, 96.3, 96, 95.7, 95.6],
+                     [96, 94.5, 94.1, 94.1, 93.9, 93.7],
+                     [94.2, 91.7, 90.7, 90.6, 90.9, 90.5],
+                     [94, 92.1, 91, 90.5, 90.5, 90.2],
+                     [94.3, 92.9, 92.2, 91.1, 90.4, 90.4],
+                     [93, 92.4, 92, 91.8, 90.7, 89.8],
+                     [95.4, 95.3, 94.6, 94.6, 94.7, 94.8],
+                     [96.9, 96.4, 96.3, 96.2, 96.3, 96.3]]
 
-    result_df = np.load('./res/result_df/model_' + str(model_number) + '_' + str(classxy) + '_maxextent_epoch5.npy')
-    result_df_trivial = np.load('./res/result_df/model_3_1_maxextent.npy')  # model_class
-    # result_df_trivial = np.empty((12, 6))
-    # result_icenet = [[96.9, 96.4, 96.4, 96.4, 96.3, 96.3],
-    #                  [96.9, 96, 95.8, 95.8, 95.7, 95.7],
-    #                  [96.9, 95.7, 95.3, 95, 95.1, 95.1],
-    #                  [97.1, 95.9, 95.4, 95.3, 95.1, 95.1],
-    #                  [97.5, 96.6, 96.3, 96, 95.7, 95.6],
-    #                  [96, 94.5, 94.1, 94.1, 93.9, 93.7],
-    #                  [94.2, 91.7, 90.7, 90.6, 90.9, 90.5],
-    #                  [94, 92.1, 91, 90.5, 90.5, 90.2],
-    #                  [94.3, 92.9, 92.2, 91.1, 90.4, 90.4],
-    #                  [93, 92.4, 92, 91.8, 90.7, 89.8],
-    #                  [95.4, 95.3, 94.6, 94.6, 94.7, 94.8],
-    #                  [96.9, 96.4, 96.3, 96.2, 96.3, 96.3]]
-    # for i in range(12):
-    #     for j in range(6):
-    #         result_df_trivial[i, j] = result_icenet[i][j]
+    if model1 == 1 or model1 == 2 or model1 == 3 or model1 == 4:
+        model1_df = np.load('./res/result_df/model_' + str(model1) + '_1_maxextent_correct.npy')
+
+        if model1 == 1:
+            t = "U-Net 1 model"
+        elif model1 == 2:
+            t = "U-Net 2 model"
+        elif model1 == 3:
+            t = "Simple Convolution model"
+        elif model1 == 4:
+            t = "Trivial model"
+
+    elif model1 == 5:
+        t = "Icenet"
+        model1_df = np.empty((12, 6))
+        for i in range(12):
+            for j in range(6):
+                model1_df[i, j] = result_icenet[i][j]/100
+
+    if model2 != 0:
+        compMode = True
+        save_fn = str(model1) + "vs" + str(model2) + ".png"
+        t += " comparison with the "
+        if model2 == 1 or model2 == 2 or model2 == 3 or model2 == 4:
+            model2_df = np.load('./res/result_df/model_' + str(model2) + '_1_maxextent_correct.npy')
+
+            if model2 == 1:
+                t += "U-Net 1 model"
+            elif model2 == 2:
+                t += "U-Net 2 model"
+            elif model2 == 3:
+                t += "Simple Convolution model"
+            elif model2 == 4:
+                t += "Trivial model"
+
+        elif model2 == 5:
+            t += "Icenet"
+            model2_df = np.empty((12, 6))
+            for i in range(12):
+                for j in range(6):
+                    model2_df[i, j] = result_icenet[i][j]/100
+
     x_labels = [1, 2, 3, 4, 5, 6]
     y_labels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-    #  - result_df_trivial[:, :]*100
-    ax = sns.heatmap(result_df[:, :]*100 - result_df_trivial[:, :]*100, annot=True, xticklabels=x_labels, vmin=-30, vmax=30, yticklabels=y_labels, fmt='.2g', cmap='RdYlGn')
-    t = "U-Net 1 model improvements on Simple convolution model"
-    ax.set_title(t, fontsize=15)
+
+    if compMode:
+        ax = sns.heatmap(model1_df[:, :]*100 - model2_df[:, :]*100, annot=True, vmin=-30, vmax=30, xticklabels=x_labels, yticklabels=y_labels, fmt='.3g', cmap='RdYlGn')
+    else:  # simply model1 values
+        ax = sns.heatmap(model1_df[:, :] * 100, annot=True, vmin=50, vmax=100, xticklabels=x_labels, yticklabels=y_labels, fmt='.3g', cmap='RdYlGn')
+
+    ax.set_title(t, fontsize=14)
+
     ax.tick_params(axis='y', rotation=0)
     ax.set_xlabel('Lead Time (months)', fontweight='bold')
     ax.set_ylabel('Calendar month', fontweight='bold')
     cbar = ax.collections[0].colorbar
-    cbar.set_label(file_str[1], fontsize=15)
-    plt.savefig('./res/plots/model' + str(model_number) + '_' + type_metric + '_' + str(classxy) + '_compTrivial.png', format='png')
+    cbar.set_label("Binary Accuracy (%)", fontsize=15)
+
+    plt.savefig('./res/plots/' + save_fn, format='png')
     plt.show()
 
 
@@ -704,7 +729,7 @@ def create_heatpmap_df(model_number, classxy, metric):
             if month == 3 or month == 6 or month == 9:
                 num_batch += 1
             for year in range(2016, 2022):
-                if year == 2021 and month in range(12-lead_time, 13):  # a check still
+                if year == 2021 and month in range(12-lead_time, 13):
                     continue
                 days = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
                 if (year % 4) == 0:
@@ -727,15 +752,19 @@ def create_heatpmap_df(model_number, classxy, metric):
                 test_ds = tf.data.Dataset.from_tensor_slices((X_test, y_test))
                 test_ds = test_ds.batch(1)
                 for batch_idx, (x_batch, y_batch) in enumerate(test_ds):
-                    y_pred = model(x_batch)
+                    if model_number != 4:
+                        y_pred = model(x_batch)
+                    else:
+                        y_pred = x_batch
 
-                    metric.update_state(np.reshape(y_batch, (186624, 1)), np.reshape(y_pred, (186624, 1)), sample_weight=np.reshape(max_extent_months[month], 186624))
-            result_df[month][lead_time-1] = metric.result()
-            print(f"metric for the month {month+1} with a lead time of {lead_time}: {metric.result()}")
+                    metric.update_state(np.reshape(y_batch, (186624, 1)), np.reshape(y_pred, (186624, 1)), sample_weight=np.reshape(max_extent_months[(month+lead_time) % 12], 186624))
+            result_df[(month+lead_time) % 12][lead_time-1] = metric.result()
+            months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+            print(f"metric for the month \"{months[(month+lead_time) % 12]}\" with a lead time of {lead_time}: {metric.result()}")
             metric.reset_state()
 
     print(result_df)
-    np.save('.\\res\\result_df\\model_' + str(model_number) + '_' + str(classxy) + '_maxextent.npy', result_df)
+    np.save('.\\res\\result_df\\model_' + str(model_number) + '_' + str(classxy) + '_maxextent_correct.npy', result_df)
 
 
 def create_ncdf_file(data_array, name):  # a 432x432 npy array containing sea ice values
@@ -858,3 +887,4 @@ def CNN_model(loss=BinaryCrossentropy(), metric=BinaryAccuracy(), learning_rate=
     training_loop(5, model, loss, metric, optimizer, 1, 1, 1)  # 3 lasts are x_class, y_class, lead_time
 
     return model
+    
