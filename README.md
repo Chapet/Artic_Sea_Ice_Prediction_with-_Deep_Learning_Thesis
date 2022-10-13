@@ -1,1 +1,1 @@
-# Artic_Sea_Ice_Prediction_with _Deep_Learning_Thesis
+# Artic_Sea_Ice_Prediction_with_Deep_Learning_Thesis
