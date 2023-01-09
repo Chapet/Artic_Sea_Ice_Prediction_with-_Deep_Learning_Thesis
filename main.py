@@ -33,114 +33,6 @@ SIC_LOCATION_NCDF = "/media/loulaurent/HDD/SIC/ncdf/"
 # nvtop to monitor gpu usage
 ###################
 
-################## ON HOLD #################
-
-def diff(li1, li2):  # Python code to get difference of two lists not using set()
-    li_dif = [i for i in li1 + li2 if i not in li1 or i not in li2]
-    return li_dif
-
-
-def forecast_accuracy(forecast, actual):
-    np.seterr(divide='ignore', invalid='ignore')
-    mape = np.mean(np.abs(forecast - actual) / np.abs(actual))  # MAPE cannot be used because there are zeros
-    me = np.mean(forecast - actual)  # ME
-    mae = np.mean(np.abs(forecast - actual))  # MAE
-    mpe = np.mean((forecast - actual) / actual)  # MPE cannot be used because there are zeros
-    rmse = np.mean((forecast - actual) ** 2) ** .5  # RMSE
-    mse = np.mean((forecast - actual) ** 2)  # MSE
-    corr = np.corrcoef(forecast, actual)[0, 1]  # corr
-    return {'mape': mape, 'me': me, 'mae': mae, 'mpe': mpe, 'mse': mse, 'rmse': rmse, 'corr': corr}
-
-
-def load_dfs(start=1976, end=2021):
-    dfs = {}
-    for year in range(start, end + 1):
-        df = pd.read_pickle("./res/pickle/df_" + str(year) + ".pkl")
-        dfs[year] = df
-
-    return dfs
-
-
-def get_day_information(file):
-    data = Dataset(file, mode='r')
-    time_ = data.variables['time'][:]
-    date1 = datetime.date.fromtimestamp(time_[0]) + datetime.timedelta(
-        days=365 * 8 + 2)  # missed 8 years to be up to EPOCH (with bisextile +2)
-
-    conc_array = data.variables['ice_conc'][:][0].ravel()
-    conc_array = conc_array.filled(0)  # replace missing values with zeros
-    conc_array = np.divide(conc_array, 100)  # normalize concentration between 0 and 1
-    conc_array = np.array(conc_array)
-    conc_array = conc_array.reshape((432, 432))
-
-    day_of_year_str = date1.strftime("%j")  # e.g. '065'
-    day_of_year = int(day_of_year_str)  # e.g. 65
-
-    day_array1 = np.empty((432, 432))
-    day_array1.fill(day_of_year)
-
-    no_ice_array = np.zeros((432, 432))
-    ice_array = np.zeros((432, 432))
-    for row in range(432):
-        for col in range(432):
-            e1 = conc_array[row][col]
-            if e1 >= 0.15:
-                ice_array[row][col] = 1
-            else:
-                no_ice_array[row][col] = 1
-
-    final_array = np.stack([conc_array, day_array1, no_ice_array, ice_array], axis=2)  # shape (432,432,4)
-    return final_array
-
-
-def svm_1y():
-    from sklearn.svm import SVR
-    X_train = []
-    y_train = []
-    X_test = []
-    y_test = []
-
-    dfs = load_dfs(start=1979, end=2021)
-    for year, df in dfs.items():
-        list_6m = []
-        list_september = []
-        for key, value in sorted(df[0].items(), key=lambda x: x[0]):  # key = date_str, value = SIE
-            sorted_month = int(key[5:7])
-            if 1 < sorted_month < 8:
-                list_6m.append(value * 625)
-            elif sorted_month == 9:
-                list_september.append(value * 625)
-
-        if year < 2016:
-            X_train.append(list_6m)
-            y_train.append(np.mean(list_september))
-        else:
-            X_test.append(list_6m)
-            y_test.append(np.mean(list_september))
-
-    print("X_train:")
-    print(X_train)
-    print("y_train:")
-    print(y_train)
-    print("X_test:")
-    print(X_test)
-    print("y_test:")
-    print(y_test)
-    # print([x * 625 for x in y_test])
-
-    svr = SVR(kernel='linear')  # see appendix C of guide to SVM -> visibly every case is different
-    svr.fit(X_train, y_train)
-
-    forecast = svr.predict(X_test)
-    print("forecast:")
-    print(forecast)
-    actual = y_test
-    # print(svr.score(X_test, y_test))  # coefficient of determination of the prediction
-
-    acc = forecast_accuracy(forecast, actual)
-    for e in acc.items():
-        print(e)
-
 
 ################### KEEP ###################
 
@@ -151,6 +43,7 @@ def epoch_to_datetime(epoch_time):
     month = int(timestamp.strftime("%m"))
     day = int(timestamp.strftime("%d"))
     return year, month, day
+
 
 # takes a filename from the npy folder and returns the corresponding epoch
 def file_to_epoch(filename):
@@ -179,40 +72,55 @@ def train(num_epoch, model, loss_fn, acc_metric, optimizer, lead_time):
     epoch_day = 86400  # one day is 86400 sec
     epoch_month = 30 * epoch_day  # prediction time of one month
 
-    for epoch_it in range(num_epoch):
+    start_epoch_range = 0
+
+    for epoch_it in range(start_epoch_range, num_epoch):
         print(f"\nStart of Training Epoch {epoch_it + 1}")
 
         # instead of going over the years, give the start years and the duration, then use the epoch
         # to transform into date
 
-        for epoch_time in range(epoch_start + (lead_time + 1) * epoch_month, epoch_end + epoch_day, epoch_day):
+        # or epoch_time in range(epoch_start + (lead_time + 1) * epoch_month, epoch_end + epoch_day, epoch_day):
+        for epoch_time in range(epoch_start + (11+lead_time) * epoch_month, epoch_end + epoch_day, epoch_day):
             # load day to predict
             exists, target_day = load_day(epoch_time)
             if not exists:
                 continue  # if the day is not available, it can't be used for training
 
-            # try to load day to predict from (1 month before), if not +-1, if still not, skip this day
-            exists, day_1m = load_day(epoch_time - lead_time * epoch_month)
-            if not exists:
-                exists, day_1m = load_day(epoch_time - lead_time * epoch_month + epoch_day)
-                if not exists:
-                    exists, day_1m = load_day(epoch_time - lead_time * epoch_month - epoch_day)
-                    if not exists:
-                        continue  # if the day 30, 31 or 29 day before is not available, skip this day for training
+            day_12m = np.zeros((12, 432, 432))
 
-            # try to load day to predict from (2 month before), if not +-1, if still not, skip the day for training
-            exists, day_2m = load_day(epoch_time - (lead_time + 1) * epoch_month)
-            if not exists:
-                exists, day_2m = load_day(epoch_time - (lead_time + 1) * epoch_month + epoch_day)
+            for i in range(12):
+                # try to load day to predict from (2 month before), if not +-1, if still not, skip the day for training
+                exists, day_12m[i] = load_day(epoch_time - (lead_time + i) * epoch_month)
                 if not exists:
-                    exists, day_2m = load_day(epoch_time - (lead_time + 1) * epoch_month - epoch_day)
+                    exists, day_12m[i] = load_day(epoch_time - (lead_time + i) * epoch_month + epoch_day)
                     if not exists:
-                        continue  # if the day 60, 61 or 59 day before is not available, skip the day for training
+                        exists, day_12m[i] = load_day(epoch_time - (lead_time + i) * epoch_month - epoch_day)
+                        if not exists:
+                            continue  # if the day 60, 61 or 59 day before is not available, skip the day for training
+
+            # # try to load day to predict from (1 month before), if not +-1, if still not, skip this day
+            # exists, day_1m = load_day(epoch_time - lead_time * epoch_month)
+            # if not exists:
+            #     exists, day_1m = load_day(epoch_time - lead_time * epoch_month + epoch_day)
+            #     if not exists:
+            #         exists, day_1m = load_day(epoch_time - lead_time * epoch_month - epoch_day)
+            #         if not exists:
+            #             continue  # if the day 30, 31 or 29 day before is not available, skip this day for training
+            #
+            # # try to load day to predict from (2 month before), if not +-1, if still not, skip the day for training
+            # exists, day_2m = load_day(epoch_time - (lead_time + 1) * epoch_month)
+            # if not exists:
+            #     exists, day_2m = load_day(epoch_time - (lead_time + 1) * epoch_month + epoch_day)
+            #     if not exists:
+            #         exists, day_2m = load_day(epoch_time - (lead_time + 1) * epoch_month - epoch_day)
+            #         if not exists:
+            #             continue  # if the day 60, 61 or 59 day before is not available, skip the day for training
 
             # if we arrive here, we have target_day and day_1m which have the format (432, 432)
 
             # actual training
-            X_train = np.reshape(np.stack((day_2m, day_1m), axis=2), (1, 432, 432, 2))
+            X_train = np.reshape(np.stack(day_12m, axis=2), (1, 432, 432, 12))  # reverse day_12m has an impact ?
             y_train = np.reshape(target_day, (1, 432, 432, 1))
             train_ds = tf.data.Dataset.from_tensor_slices((X_train, y_train))
             train_ds = train_ds.batch(1)  # .shuffle(buffer_size=1024) entre train_ds et batch
@@ -228,9 +136,11 @@ def train(num_epoch, model, loss_fn, acc_metric, optimizer, lead_time):
                 acc_metric.update_state(y_batch, y_pred)
                 loss_saved = loss
 
+        model.save(SIC_LOCATION_MODELS + "50ep_12dates_1mSpacing_" + str(lead_time) + "m")
+
             # print(f"metric: {acc_metric.result()} and loss: {loss_saved}")
 
-    model.save(SIC_LOCATION_MODELS + "50ep_3dates_1mSpacing_" + str(lead_time) + "m")
+    model.save(SIC_LOCATION_MODELS + "50ep_12dates_1mSpacing_" + str(lead_time) + "m")
     print("model saved")
 
     # # evaluates the model on the test set
@@ -314,31 +224,8 @@ def go_through_files():
                     np.save(npy_path + "ice_class_nh_{}{:02d}{:02d}.npy".format(y, m, d), conc_array)
 
 
-def interpolate_gaps():  # there shouldn't be any interpolation yet
-    # when there is a gap, register a start_gap event
-    # when the gap ends, register an end_gap event & interpolate missing values
-
-    # special cases = days missing at the start or at the end -> just add them at the beginning
-    pass
-
-    # start at epoch of 1/1/1979 then increment day by day
-    epoch_cur = 284040000
-    gap_size = 0  # used to count & check if we are currently in a gap
-    # from 1/1/1979 to 31/12/2021 => 15705 days (1 day = 86400 seconds)
-    for i in range(15705):
-        # get year, month & day from the epoch time
-        pass
-
-        # check if the file corresponding to that date exists
-        # yes -> if gap_size == 0 => do nothing (so this will not appear)
-        #     -> if gap_size > 0 => end gap & compute
-        # no -> increment gap_size
-
-        epoch_cur += 86400  # increment day
-
-
 def get_model(model_type, filter_size=3, n_filters_factor=1, n_output_classes=1):
-    inputs = Input(shape=(432, 432, 2))
+    inputs = Input(shape=(432, 432, 12))
 
     if model_type == 1:
         conv1 = Conv2D(int(64 * n_filters_factor), filter_size, activation='relu', padding='same',
@@ -484,7 +371,8 @@ def create_heatpmap_df(metric):
     months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
 
     for lead_time in range(1, 7):
-        model = load_model(SIC_LOCATION_MODELS + "50ep_3dates_1mSpacing_" + str(lead_time) + "m")
+
+        # model = load_model(SIC_LOCATION_MODELS + "50ep_12dates_1mSpacing_" + str(lead_time) + "m")
 
         for month in range(0, 12):
             # parcourir les années et à chaque fois faire le calcul sur les jours dans les folders des mois
@@ -508,32 +396,45 @@ def create_heatpmap_df(metric):
                     if not exists:
                         continue  # if the day is not available, it can't be used for training
 
-                    # try to load day to predict from (lead_times month(s) before), if not +-1, if still not, skip this day
-                    exists, day_1m = load_day(epoch_time - lead_time * epoch_month)
-                    if not exists:
-                        exists, day_1m = load_day(epoch_time - lead_time * epoch_month + epoch_day)
-                        if not exists:
-                            exists, day_1m = load_day(epoch_time - lead_time * epoch_month - epoch_day)
-                            if not exists:
-                                continue  # if the day 30, 31 or 29 day before is not available, skip this day for training
+                    day_12m = np.zeros((12, 432, 432))
 
-                    # try to load day to predict from (lead_time+1 months before), if not +-1, if still not, skip the day for training
-                    exists, day_2m = load_day(epoch_time - (lead_time + 1) * epoch_month)
-                    if not exists:
-                        exists, day_2m = load_day(epoch_time - (lead_time + 1) * epoch_month + epoch_day)
+                    for i in range(12):
+                        # try to load day to predict from (2 month before), if not +-1, if still not, skip the day for training
+                        exists, day_12m[i] = load_day(epoch_time - (lead_time + i) * epoch_month)
                         if not exists:
-                            exists, day_2m = load_day(epoch_time - (lead_time + 1) * epoch_month - epoch_day)
+                            exists, day_12m[i] = load_day(epoch_time - (lead_time + i) * epoch_month + epoch_day)
                             if not exists:
-                                continue  # if the day 60, 61 or 59 day before is not available, skip the day for training
+                                exists, day_12m[i] = load_day(epoch_time - (lead_time + i) * epoch_month - epoch_day)
+                                if not exists:
+                                    continue  # if the day 60, 61 or 59 day before is not available, skip the day for training
+
+                    # # try to load day to predict from (lead_times month(s) before), if not +-1, if still not, skip this day
+                    # exists, day_1m = load_day(epoch_time - lead_time * epoch_month)
+                    # if not exists:
+                    #     exists, day_1m = load_day(epoch_time - lead_time * epoch_month + epoch_day)
+                    #     if not exists:
+                    #         exists, day_1m = load_day(epoch_time - lead_time * epoch_month - epoch_day)
+                    #         if not exists:
+                    #             continue  # if the day 30, 31 or 29 day before is not available, skip this day for training
+                    #
+                    # # try to load day to predict from (lead_time+1 months before), if not +-1, if still not, skip the day for training
+                    # exists, day_2m = load_day(epoch_time - (lead_time + 1) * epoch_month)
+                    # if not exists:
+                    #     exists, day_2m = load_day(epoch_time - (lead_time + 1) * epoch_month + epoch_day)
+                    #     if not exists:
+                    #         exists, day_2m = load_day(epoch_time - (lead_time + 1) * epoch_month - epoch_day)
+                    #         if not exists:
+                    #             continue  # if the day 60, 61 or 59 day before is not available, skip the day for training
 
                     # actual testing
-                    X_test = np.reshape(np.stack((day_2m, day_1m), axis=2), (1, 432, 432, 2))
+                    X_test = np.reshape(np.stack(day_12m, axis=2), (1, 432, 432, 12))
                     y_test = np.reshape(target_day, (1, 432, 432, 1))
                     test_ds = tf.data.Dataset.from_tensor_slices((X_test, y_test))
                     test_ds = test_ds.batch(1)  # .shuffle(buffer_size=1024) entre train_ds et batch
 
                     for batch_idx, (x_batch, y_batch) in enumerate(test_ds):  # training over 1 batch
-                        y_pred = model(x_batch)
+                        # y_pred = model(x_batch)
+                        y_pred = np.zeros((432, 432))
 
                         # we update the metric but only take into account the cells in the observed max extent
                         metric.update_state(np.reshape(y_batch, (186624, 1)), np.reshape(y_pred, (186624, 1)),
@@ -545,79 +446,93 @@ def create_heatpmap_df(metric):
             metric.reset_state()
 
     print(result_df)
-    np.save(SIC_LOCATION_RESULTS + "full_U-Net_plotDF", result_df)
+    np.save(SIC_LOCATION_RESULTS + "NoIce", result_df)
 
 
-def plot_heatmap(model1, model2):  # model1 is the base model, model2 is the model to compare model1 with if model2 = 0, we simply display the result of model1
+def plot_heatmap(compMode):  # model1 is the base model, model2 is the model to compare model1 with if model2 = 0, we simply display the result of model1
     sns.set_theme()
 
-    save_fn = str(model1) + ".png"
-    compMode = False
-    result_icenet = [[96.9, 96.4, 96.4, 96.4, 96.3, 96.3],
-                     [96.9, 96, 95.8, 95.8, 95.7, 95.7],
-                     [96.9, 95.7, 95.3, 95, 95.1, 95.1],
-                     [97.1, 95.9, 95.4, 95.3, 95.1, 95.1],
-                     [97.5, 96.6, 96.3, 96, 95.7, 95.6],
-                     [96, 94.5, 94.1, 94.1, 93.9, 93.7],
-                     [94.2, 91.7, 90.7, 90.6, 90.9, 90.5],
-                     [94, 92.1, 91, 90.5, 90.5, 90.2],
-                     [94.3, 92.9, 92.2, 91.1, 90.4, 90.4],
-                     [93, 92.4, 92, 91.8, 90.7, 89.8],
-                     [95.4, 95.3, 94.6, 94.6, 94.7, 94.8],
-                     [96.9, 96.4, 96.3, 96.2, 96.3, 96.3]]
+    result_icenet = [[0.969, 0.964, 0.964, 0.964, 0.963, 0.963],
+                     [0.969, 0.960, 0.958, 0.958, 0.957, 0.957],
+                     [0.969, 0.957, 0.953, 0.950, 0.951, 0.951],
+                     [0.971, 0.959, 0.954, 0.953, 0.951, 0.951],
+                     [0.975, 0.966, 0.963, 0.960, 0.957, 0.956],
+                     [0.960, 0.945, 0.941, 0.941, 0.939, 0.937],
+                     [0.942, 0.917, 0.907, 0.906, 0.909, 0.905],
+                     [0.940, 0.921, 0.910, 0.905, 0.905, 0.902],
+                     [0.943, 0.929, 0.922, 0.911, 0.904, 0.904],
+                     [0.930, 0.924, 0.920, 0.918, 0.907, 0.898],
+                     [0.954, 0.953, 0.946, 0.946, 0.947, 0.948],
+                     [0.969, 0.964, 0.963, 0.962, 0.963, 0.963]]
+    result_trivial = [[0.945, 0.945, 0.945, 0.945, 0.945, 0.945],
+                     [0.933, 0.933, 0.933, 0.933, 0.933, 0.933],
+                     [0.929, 0.929, 0.929, 0.929, 0.929, 0.929],
+                     [0.941, 0.941, 0.941, 0.941, 0.941, 0.941],
+                     [0.932, 0.932, 0.932, 0.932, 0.932, 0.932],
+                     [0.882, 0.882, 0.882, 0.882, 0.882, 0.882],
+                     [0.876, 0.876, 0.876, 0.876, 0.876, 0.876],
+                     [0.885, 0.885, 0.885, 0.885, 0.885, 0.885],
+                     [0.896, 0.896, 0.896, 0.896, 0.896, 0.896],
+                     [0.867, 0.867, 0.867, 0.867, 0.867, 0.867],
+                     [0.902, 0.902, 0.902,0.902 , 0.902, 0.902],
+                     [0.926, 0.926, 0.926, 0.926, 0.926, 0.926]]
+    result_UN1_1m = [[0.941, 0.920, 0.875, 0.846, 0.799, 0.852],
+                     [0.924, 0.926, 0.919, 0.849, 0.701, 0.738],
+                     [0.913, 0.921, 0.928, 0.913, 0.746, 0.671],
+                     [0.933, 0.911, 0.925, 0.930, 0.870, 0.759],
+                     [0.909, 0.879, 0.908, 0.926, 0.918, 0.867],
+                     [0.835, 0.814, 0.835, 0.874, 0.904, 0.880],
+                     [0.714, 0.708, 0.711, 0.721, 0.772, 0.841],
+                     [0.536, 0.530, 0.523, 0.532, 0.579, 0.686],
+                     [0.558, 0.502, 0.495, 0.498, 0.544, 0.637],
+                     [0.678, 0.630, 0.603, 0.601, 0.655, 0.748],
+                     [0.829, 0.806, 0.776, 0.777, 0.823, 0.846],
+                     [0.902, 0.873, 0.862, 0.875, 0.895, 0.878]]
+    result_UN2_1m = [[0.908, 0.785, 0.629, 0.558, 0.600, 0.729],
+                     [0.933, 0.864, 0.746, 0.594, 0.522, 0.565],
+                     [0.948, 0.919, 0.859, 0.748, 0.587, 0.516],
+                     [0.931, 0.923, 0.926, 0.893, 0.774, 0.619],
+                     [0.918, 0.872, 0.877, 0.901, 0.905, 0.817],
+                     [0.894, 0.833, 0.811, 0.820, 0.837, 0.869],
+                     [0.816, 0.730, 0.699, 0.692, 0.708, 0.711],
+                     [0.794, 0.615, 0.538, 0.516, 0.512, 0.526],
+                     [0.888, 0.723, 0.572, 0.505, 0.485, 0.489],
+                     [0.859, 0.847, 0.787, 0.684, 0.622, 0.590],
+                     [0.785, 0.690, 0.735, 0.816, 0.832, 0.806],
+                     [0.851, 0.680, 0.601, 0.644, 0.770, 0.872]]
+    result_simple_conv = [[0.941, 0.864, 0.728, 0.608, 0.596, 0.676],
+                     [0.946, 0.920, 0.824, 0.640, 0.515, 0.528],
+                     [0.938, 0.930, 0.909, 0.776, 0.579, 0.484],
+                     [0.901, 0.892, 0.916, 0.904, 0.763, 0.580],
+                     [0.873, 0.831, 0.843, 0.920, 0.896, 0.762],
+                     [0.841, 0.798, 0.788, 0.852, 0.893, 0.862],
+                     [0.740, 0.702, 0.683, 0.697, 0.753, 0.837],
+                     [0.652, 0.549, 0.516, 0.518, 0.552, 0.676],
+                     [0.735, 0.594, 0.511, 0.494, 0.516, 0.608],
+                     [0.819, 0.774, 0.698, 0.654, 0.649, 0.723],
+                     [0.836, 0.788, 0.805, 0.845, 0.846, 0.857],
+                     [0.889, 0.776, 0.716, 0.700, 0.766, 0.815]]
 
-    if model1 == 1 or model1 == 2 or model1 == 3 or model1 == 4:
-        model1_df = np.load(SIC_LOCATION_RESULTS + "50ep_3dates_1mSpacing_plotDF.npy")  # to change
+    # model1_df = np.load(SIC_LOCATION_RESULTS + "full_U-Net_plotDF.npy")  # to change
+    model1_df = np.asarray(result_UN1_1m)
 
-        if model1 == 1:
-            t = "U-Net 1 model"
-        elif model1 == 2:
-            t = "U-Net 2 model"
-        elif model1 == 3:
-            t = "Simple Convolution model"
-        elif model1 == 4:
-            t = "Trivial model"
-
-    elif model1 == 5:
-        t = "Icenet"
-        model1_df = np.empty((12, 6))
-        for i in range(12):
-            for j in range(6):
-                model1_df[i, j] = result_icenet[i][j] / 100
-
-    if model2 != 0:
-        compMode = True
-        save_fn = str(model1) + "vs" + str(model2) + ".png"
-        t += " comparison with the "
-        if model2 == 1 or model2 == 2 or model2 == 3 or model2 == 4:
-            model2_df = np.load('./res/results/model_' + str(model2) + '_1_maxextent_correct.npy')
-
-            if model2 == 1:
-                t += "U-Net 1 model"
-            elif model2 == 2:
-                t += "U-Net 2 model"
-            elif model2 == 3:
-                t += "Simple Convolution model"
-            elif model2 == 4:
-                t += "Trivial model"
-
-        elif model2 == 5:
-            t += "Icenet"
-            model2_df = np.empty((12, 6))
-            for i in range(12):
-                for j in range(6):
-                    model2_df[i, j] = result_icenet[i][j] / 100
+    if compMode:
+        # model2_df = np.load(SIC_LOCATION_RESULTS + "full_U-Net_plotDF.npy")
+        model2_df = np.asarray(result_UN1_1m)
 
     x_labels = [1, 2, 3, 4, 5, 6]
     y_labels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
     if compMode:
         ax = sns.heatmap(model1_df[:, :] * 100 - model2_df[:, :] * 100, annot=True, vmin=-30, vmax=30,
-                         xticklabels=x_labels, yticklabels=y_labels, fmt='.3g', cmap='RdYlGn')
+                         xticklabels=x_labels, yticklabels=y_labels, fmt='.1f', cmap='RdYlGn')
     else:  # simply model1 values
         ax = sns.heatmap(model1_df[:, :] * 100, annot=True, vmin=50, vmax=100, xticklabels=x_labels,
                          yticklabels=y_labels, fmt='.3g', cmap='RdYlGn')
 
+    # title override:
+    save_fn = "U-Net1_1m_10epochs.png"
+    t = "U-Net 1 - 1 day Training - 10 epochs"
     ax.set_title(t, fontsize=14)
 
     ax.tick_params(axis='y', rotation=0)
@@ -697,13 +612,57 @@ def create_ncdf_file(data_array, filename):  # data_array: a 432x432 npy array c
     ref.close()
 
 
+# npy array to be used by the create_ncdf_file function for panoply visualization
+def save_data_array(model_name, month):
+    # possible models: "UN1-2", "UN1-12", "Actual", "Trivial"
+    # possible month: "march", "june", "september"
+
+    epoch_day = 86400  # one day is 86400 sec
+    epoch_time_15march = 1615809600
+    epoch_time_15june = 1623758400
+    epoch_time_15sept = 1631707200
+
+    if month == "march":
+        chosen_epoch = epoch_time_15march
+    elif month == "june":
+        chosen_epoch = epoch_time_15june
+    elif month == "september":
+        chosen_epoch = epoch_time_15sept
+
+    if model_name == "Actual":
+        empty_bool, day = load_day(chosen_epoch)
+        return day
+    elif model_name == "Trivial":
+        chosen_epoch -= 365 * epoch_day
+        empty_bool, day = load_day(chosen_epoch)
+        return day
+    elif model_name == "UN1-2":
+        model = load_model(SIC_LOCATION_MODELS + "50ep_3dates_1mSpacing_6m")
+        it = 2
+        day_list = np.zeros((2, 432, 432))
+    elif model_name == "UN1-12":
+        model = load_model(SIC_LOCATION_MODELS + "50ep_12dates_1mSpacing_6m")
+        it = 12
+        day_list = np.zeros((12, 432, 432))
+    else:
+        exit("The {model_name} function argument is wrong, should be \"UN1-2\" or \"UN1-12\"")
+
+    for i in range(it):
+        empty_bool, day_list[i] = load_day(chosen_epoch - 6 * 30 * epoch_day - i * 30 * epoch_day)
+
+    days = np.reshape(np.stack(day_list, axis=2), (1, 432, 432, it))
+    y_pred = model(days)
+    return y_pred
+
+
 def CNN_model(loss=BinaryCrossentropy(), metric=BinaryAccuracy(), learning_rate=1e-4):  # to switch conc/class mse+mse&acc/bin+bin
 
     model = get_model(1)  # select the model to use
     optimizer = Adam(learning_rate=learning_rate)
     model.compile(optimizer=optimizer, loss=loss, metrics=metric)
     model.summary(line_length=120)
-    train(50, model, loss, metric, optimizer, 5)  # last var is lead_time
+    train(50, model, loss, metric, optimizer, 4)  # last var is lead_time
+    # was at "Start of Epoch 15"
 
     return model
 
@@ -715,13 +674,12 @@ print(f"Run start: {datetime.datetime.fromtimestamp(start_time).strftime('%H:%M:
 np.set_printoptions(threshold=sys.maxsize)
 
 
-CNN_model()
+# CNN_model()
 # get_max_extent(range(1979, 2022))
 # create_heatpmap_df(BinaryAccuracy())
-# plot_heatmap(2, 0)
-# a = np.ones((432, 432))
-# create_ncdf_file(a, "test.nc")
-
+# plot_heatmap(False)
+create_ncdf_file(save_data_array("Trivial", "march"), "march_Trivial.nc")  # <-- ici
+# save_data_array("test")
 # go_through_files()
 
 
